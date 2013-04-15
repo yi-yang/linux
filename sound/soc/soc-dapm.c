@@ -831,6 +831,9 @@ static int is_connected_output_ep(struct snd_soc_dapm_widget *widget,
 		if (path->weak)
 			continue;
 
+		if (path->walking)
+			return 1;
+
 		if (path->walked)
 			continue;
 
@@ -838,6 +841,7 @@ static int is_connected_output_ep(struct snd_soc_dapm_widget *widget,
 
 		if (path->sink && path->connect) {
 			path->walked = 1;
+			path->walking = 1;
 
 			/* do we need to add this widget to the list ? */
 			if (list) {
@@ -847,11 +851,14 @@ static int is_connected_output_ep(struct snd_soc_dapm_widget *widget,
 					dev_err(widget->dapm->dev,
 						"ASoC: could not add widget %s\n",
 						widget->name);
+					path->walking = 0;
 					return con;
 				}
 			}
 
 			con += is_connected_output_ep(path->sink, list);
+
+			path->walking = 0;
 		}
 	}
 
@@ -931,6 +938,9 @@ static int is_connected_input_ep(struct snd_soc_dapm_widget *widget,
 		if (path->weak)
 			continue;
 
+		if (path->walking)
+			return 1;
+
 		if (path->walked)
 			continue;
 
@@ -938,6 +948,7 @@ static int is_connected_input_ep(struct snd_soc_dapm_widget *widget,
 
 		if (path->source && path->connect) {
 			path->walked = 1;
+			path->walking = 1;
 
 			/* do we need to add this widget to the list ? */
 			if (list) {
@@ -947,11 +958,14 @@ static int is_connected_input_ep(struct snd_soc_dapm_widget *widget,
 					dev_err(widget->dapm->dev,
 						"ASoC: could not add widget %s\n",
 						widget->name);
+					path->walking = 0;
 					return con;
 				}
 			}
 
 			con += is_connected_input_ep(path->source, list);
+
+			path->walking = 0;
 		}
 	}
 
@@ -1023,7 +1037,7 @@ int dapm_regulator_event(struct snd_soc_dapm_widget *w,
 
 	if (SND_SOC_DAPM_EVENT_ON(event)) {
 		if (w->invert & SND_SOC_DAPM_REGULATOR_BYPASS) {
-			ret = regulator_allow_bypass(w->regulator, true);
+			ret = regulator_allow_bypass(w->regulator, false);
 			if (ret != 0)
 				dev_warn(w->dapm->dev,
 					 "ASoC: Failed to bypass %s: %d\n",
@@ -1033,7 +1047,7 @@ int dapm_regulator_event(struct snd_soc_dapm_widget *w,
 		return regulator_enable(w->regulator);
 	} else {
 		if (w->invert & SND_SOC_DAPM_REGULATOR_BYPASS) {
-			ret = regulator_allow_bypass(w->regulator, false);
+			ret = regulator_allow_bypass(w->regulator, true);
 			if (ret != 0)
 				dev_warn(w->dapm->dev,
 					 "ASoC: Failed to unbypass %s: %d\n",
@@ -3039,6 +3053,14 @@ snd_soc_dapm_new_control(struct snd_soc_dapm_context *dapm,
 				w->name, ret);
 			return NULL;
 		}
+
+		if (w->invert & SND_SOC_DAPM_REGULATOR_BYPASS) {
+			ret = regulator_allow_bypass(w->regulator, true);
+			if (ret != 0)
+				dev_warn(w->dapm->dev,
+					 "ASoC: Failed to unbypass %s: %d\n",
+					 w->name, ret);
+		}
 		break;
 	case snd_soc_dapm_clock_supply:
 #ifdef CONFIG_CLKDEV_LOOKUP
@@ -3247,14 +3269,16 @@ static int snd_soc_dai_link_event(struct snd_soc_dapm_widget *w,
 		break;
 
 	case SND_SOC_DAPM_POST_PMU:
-		ret = snd_soc_dai_digital_mute(sink, 0);
+		ret = snd_soc_dai_digital_mute(sink, 0,
+					       SNDRV_PCM_STREAM_PLAYBACK);
 		if (ret != 0 && ret != -ENOTSUPP)
 			dev_warn(sink->dev, "ASoC: Failed to unmute: %d\n", ret);
 		ret = 0;
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
-		ret = snd_soc_dai_digital_mute(sink, 1);
+		ret = snd_soc_dai_digital_mute(sink, 1,
+					       SNDRV_PCM_STREAM_PLAYBACK);
 		if (ret != 0 && ret != -ENOTSUPP)
 			dev_warn(sink->dev, "ASoC: Failed to mute: %d\n", ret);
 		ret = 0;
